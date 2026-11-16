@@ -1,0 +1,24 @@
+# Build output
+Debug/
+Release/
+*.o
+*.d
+*.su
+*.cyclo
+*.elf
+*.map
+*.list
+*.bin
+*.hex
+*.srec
+
+# STM32CubeIDE / Eclipse local state
+.settings/
+.metadata/
+
+# OS / editor
+Thumbs.db
+.DS_Store
+*.swp
+.vscode/
+.claude/
