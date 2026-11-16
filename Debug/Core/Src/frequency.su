@@ -1,0 +1,2 @@
+../Core/Src/frequency.c:16:5:frequency_init	16	static
+../Core/Src/frequency.c:31:10:frequency_detect	56	static
