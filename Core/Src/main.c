@@ -2,11 +2,13 @@
 /* USER CODE BEGIN Header */
 /**
   * @file    : main.c
-  * @brief   : Audio Frequency Detector
+  * @brief   : STM32 Musical Frequency Detector
   *
-  * Reads microphone samples using ADC and DMA.
-  * Uses CMSIS-DSP FFT to detect the strongest frequency.
-  * Prints results over UART to Tera Term.
+  * Collects microphone samples using ADC and DMA.
+  * Uses CMSIS-DSP FFT to detect audio frequencies.
+  * Converts detected frequencies into musical notes.
+  * Displays results using UART and LCD1602.
+  * Uses DAC1 to adjust LCD contrast.
   */
 /* USER CODE END Header */
 
@@ -15,6 +17,8 @@
 /* USER CODE BEGIN Includes */
 #include "debug.h"
 #include "microphone.h"
+#include "notes.h"
+#include "lcd.h"
 /* USER CODE END Includes */
 
 /* Private function prototypes */
@@ -23,11 +27,40 @@ static void MX_GPIO_Init(void);
 
 /* USER CODE BEGIN 0 */
 
+// Minimum peak-to-peak amplitude required for detection
+#define SILENCE_THRESHOLD 500
+
+// DAC value controlling LCD contrast
+// 800 produces approximately 0.64V with a 3.3V reference
+#define LCD_CONTRAST 800
+
 // Initialize the FFT
 int frequency_init(void);
 
-// Detect the strongest frequency from microphone samples
+// Detect frequency in tenths of a Hz
 uint32_t frequency_detect(volatile uint16_t *samples);
+
+// Initialize DAC1 channel 1 on PA4
+void contrast_init(void)
+{
+    // Enable GPIOA clock
+    RCC->AHB2ENR |= RCC_AHB2ENR_GPIOAEN;
+
+    // Configure PA4 in analog mode
+    GPIOA->MODER |= (3U << 8);
+
+    // Disable pull-up and pull-down on PA4
+    GPIOA->PUPDR &= ~(3U << 8);
+
+    // Enable DAC1 peripheral clock
+    RCC->APB1ENR1 |= RCC_APB1ENR1_DAC1EN;
+
+    // Set DAC output value
+    DAC1->DHR12R1 = LCD_CONTRAST;
+
+    // Enable DAC channel 1
+    DAC1->CR |= DAC_CR_EN1;
+}
 
 /* USER CODE END 0 */
 
@@ -50,7 +83,22 @@ int main(void)
     // Initialize microphone ADC, DMA, and TIM6
     microphone_init();
 
-    // Print startup message
+    // Generate LCD contrast voltage on PA4
+    contrast_init();
+
+    // Initialize the LCD
+    lcd_init();
+
+    // Display startup message
+    lcd_clear();
+
+    lcd_set_cursor(0, 0);
+    lcd_print("STM32 Tuner");
+
+    lcd_set_cursor(1, 0);
+    lcd_print("Waiting...");
+
+    // Print startup message over UART
     debug_print("Microphone POC started!\r\n");
 
     // Initialize the 1024-point FFT
@@ -61,6 +109,10 @@ int main(void)
     else
     {
         debug_print("FFT initialization failed!\r\n");
+
+        lcd_clear();
+        lcd_set_cursor(0, 0);
+        lcd_print("FFT Init Failed");
 
         // Stop if FFT initialization fails
         while (1)
@@ -83,9 +135,6 @@ int main(void)
         // Wait until 1024 samples are collected
         while (mic_buffer_full == 0);
 
-        // Detect the strongest frequency using the FFT
-        uint32_t detected_frequency = frequency_detect(mic_buffer);
-
         // Variables for microphone statistics
         uint16_t min = 4095;
         uint16_t max = 0;
@@ -98,13 +147,13 @@ int main(void)
         {
             uint16_t sample = mic_buffer[i];
 
-            // Find minimum
+            // Find minimum ADC value
             if (sample < min)
             {
                 min = sample;
             }
 
-            // Find maximum
+            // Find maximum ADC value
             if (sample > max)
             {
                 max = sample;
@@ -114,40 +163,93 @@ int main(void)
             sum += sample;
         }
 
-        // Calculate average
+        // Calculate average ADC value
         avg = sum / BUF_LEN;
 
-        // Calculate peak-to-peak
+        // Calculate peak-to-peak amplitude
         pp = max - min;
 
-        // Print detected frequency
-        debug_print("Frequency: ");
-        debug_print_uint(detected_frequency);
-        debug_print(" Hz\r\n");
+        // Check whether the signal is loud enough
+        if (pp > SILENCE_THRESHOLD)
+        {
+            // Detect frequency using FFT
+            // Result is in tenths of a Hz
+            uint32_t detected_frequency = frequency_detect(mic_buffer);
 
-        // Print minimum
+            // Variables for musical note
+            const char *note_name;
+            int32_t octave;
+
+            // Convert frequency into a musical note
+            notes_detect(detected_frequency, &note_name, &octave);
+
+            // Update LCD with detected frequency and note
+            lcd_clear();
+
+            // First row: frequency
+            lcd_set_cursor(0, 0);
+            lcd_print("Freq: ");
+            lcd_print_uint(detected_frequency / 10);
+            lcd_print(".");
+            lcd_print_uint(detected_frequency % 10);
+            lcd_print(" Hz");
+
+            // Second row: musical note
+            lcd_set_cursor(1, 0);
+            lcd_print("Note: ");
+            lcd_print(note_name);
+            lcd_print_uint((uint32_t)octave);
+
+            // Print detected frequency over UART
+            debug_print("Frequency: ");
+            debug_print_uint(detected_frequency / 10);
+            debug_print(".");
+            debug_print_uint(detected_frequency % 10);
+            debug_print(" Hz\r\n");
+
+            // Print detected musical note over UART
+            debug_print("Note: ");
+            debug_print(note_name);
+            debug_print_int(octave);
+            debug_print("\r\n");
+        }
+        else
+        {
+            // Signal is below the threshold
+            debug_print("No sound\r\n");
+
+            // Display silence message
+            lcd_clear();
+
+            lcd_set_cursor(0, 0);
+            lcd_print("No sound");
+
+            lcd_set_cursor(1, 0);
+            lcd_print("Waiting...");
+        }
+
+        // Print minimum ADC reading
         debug_print("min=");
         debug_print_uint(min);
 
-        // Print maximum
+        // Print maximum ADC reading
         debug_print(" max=");
         debug_print_uint(max);
 
-        // Print average
+        // Print average ADC reading
         debug_print(" avg=");
         debug_print_uint(avg);
 
-        // Print peak-to-peak
+        // Print peak-to-peak amplitude
         debug_print(" pp=");
         debug_print_uint(pp);
 
-        // Move to next line
         debug_print("\r\n");
 
         // Count completed captures
         capture_count++;
 
-        // Every 10 captures, print 32 raw samples
+        // Every 10 captures, print 32 raw ADC samples
         if (capture_count % 10 == 0)
         {
             debug_print("samples=");
