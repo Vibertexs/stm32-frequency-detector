@@ -11,6 +11,7 @@
 /* USER CODE END Header */
 
 #include "main.h"
+#include "lcd.h"
 
 /* USER CODE BEGIN Includes */
 #include "debug.h"
